@@ -207,6 +207,8 @@ def main():
         choices=['nearest', 'linear', 'cubic', 'lanczos'], help='Interpolation mode')
     parser.add_argument('--scale', type=float, default=1.0,
         help='Scale factor (relative to background)')
+    parser.add_argument('--blend', type=int, default=5,
+        help='Blend radius')
     args = parser.parse_args()
 
     if args.replace_foreground is None:
@@ -281,6 +283,7 @@ def main():
     # Generate composite image via magick, because it handles alpha better.
     subprocess.run(['magick', args.out_background, args.out_warped, '-composite', args.out_composite], check=True)
     subprocess.run(['magick', args.out_background, args.out_warped + '.magick.png', '-composite', args.out_composite + '.magick.png'], check=True)
+    subprocess.run(['magick', args.out_background, args.out_warped + '.magick.png', '-channel', 'Alpha', '-negate', '-morphology', 'Dilate', f'Diamond:{args.blend*2}', '-negate', '-blur', f'{args.blend*2}x{args.blend}', '-channel', 'All', '-composite', args.out_composite + '.magick-blend.png'], check=True)
 
 if __name__ == '__main__':
     main()
