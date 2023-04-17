@@ -24,9 +24,9 @@ def fine_tune_warp(foreground, background, M, original_foreground_w, original_fo
         foreground_edge = foreground[:, -edge_width:]
 
     # Focus on a specific part of foreground image.
-    region_top_dist = region[0]
-    region_bottom_dist = len(foreground_edge) - region[1]
-    foreground_edge = foreground_edge[region_top_dist:-region_bottom_dist, :]
+    foreground_edge_critical = foreground_edge[region[0][0]:region[0][1], :]
+    if len(region) > 1:
+        foreground_edge_critical = np.append(foreground_edge_critical, foreground_edge[region[1][0]:region[1][1], :], 0)
 
     best_corr = 0.0
     best_error = None
@@ -36,8 +36,10 @@ def fine_tune_warp(foreground, background, M, original_foreground_w, original_fo
     fine_tuning_step = 1
 
     for fine_tuning_error_top in range(-max_fine_tuning_pixels, max_fine_tuning_pixels+1, fine_tuning_step):
-        #for fine_tuning_error_bottom in range(-max_fine_tuning_pixels, max_fine_tuning_pixels+1, fine_tuning_step):
-        for fine_tuning_error_bottom in [fine_tuning_error_top]:
+        fine_tuning_error_bottom_range = [fine_tuning_error_top]
+        if len(region) > 1:
+            fine_tuning_error_bottom_range = range(-max_fine_tuning_pixels, max_fine_tuning_pixels+1, fine_tuning_step)
+        for fine_tuning_error_bottom in fine_tuning_error_bottom_range:
             # Apply error correction to left or right side's Y coord.
             if use_left_edge:
                 fine_tuned_foreground_corners = points_type([
@@ -65,22 +67,24 @@ def fine_tune_warp(foreground, background, M, original_foreground_w, original_fo
                 background_edge = background_scaled_to_foreground[:, -edge_width:]
 
             # Focus on a specific part of foreground image.
-            background_edge = background_edge[region_top_dist:-region_bottom_dist, :]
+            background_edge_critical = background_edge[region[0][0]:region[0][1], :]
+            if len(region) > 1:
+                background_edge_critical = np.append(background_edge_critical, background_edge[region[1][0]:region[1][1], :], 0)
 
             # Only enable for debugging the crop operation
             if False:
-                is_success, im_buf_arr = cv.imencode('.png', foreground_edge)
+                is_success, im_buf_arr = cv.imencode('.png', foreground_edge_critical)
                 if not is_success:
                     raise Exception('cv.imencode failure')
                 im_buf_arr.tofile('foreground_edge.png')
-                is_success, im_buf_arr = cv.imencode('.png', background_edge)
+                is_success, im_buf_arr = cv.imencode('.png', background_edge_critical)
                 if not is_success:
                     raise Exception('cv.imencode failure')
                 im_buf_arr.tofile('background_edge.png')
 
             # Compute correlation.
             # https://docs.opencv.org/4.x/d4/dc6/tutorial_py_template_matching.html
-            correlation = cv.matchTemplate(background_edge,foreground_edge,cv.TM_CCOEFF_NORMED)
+            correlation = cv.matchTemplate(background_edge_critical,foreground_edge_critical,cv.TM_CCOEFF_NORMED)
             min_corr, max_corr, min_corr_loc, max_corr_loc = cv.minMaxLoc(correlation)
 
             if max_corr > best_corr:
@@ -296,10 +300,10 @@ def main():
         help='Confidence level to aim for')
     parser.add_argument('--transform-mode', default='homography',
         choices=['homography', 'affine3d', 'affine2d', 'affinepartial2d'], help='Transform mode')
-    parser.add_argument('--fine-tune-left-region', required=False,
-        type=str, help='Fine-tuning critical region (left edge) (enter two comma-separated Y coordinates in foreground scale)')
-    parser.add_argument('--fine-tune-right-region', required=False,
-        type=str, help='Fine-tuning critical region (right edge) (enter two comma-separated Y coordinates in foreground scale)')
+    parser.add_argument('--fine-tune-left-region', required=False, nargs='*',
+        type=str, help='Fine-tuning critical region (left edge) (enter two comma-separated Y coordinates in foreground scale, can be used up to twice)')
+    parser.add_argument('--fine-tune-right-region', required=False, nargs='*',
+        type=str, help='Fine-tuning critical region (right edge) (enter two comma-separated Y coordinates in foreground scale, can be used up to twice)')
     parser.add_argument('--interpolation', default='linear',
         choices=['nearest', 'linear', 'cubic', 'lanczos'], help='Interpolation mode')
     parser.add_argument('--scale', type=float, default=1.0,
@@ -314,11 +318,13 @@ def main():
         args.replace_background = args.background
 
     if args.fine_tune_left_region is not None:
-        args.fine_tune_left_region = args.fine_tune_left_region.split(',')
-        args.fine_tune_left_region = list([int(v) for v in args.fine_tune_left_region])
+        for n in range(len(args.fine_tune_left_region)):
+            args.fine_tune_left_region[n] = args.fine_tune_left_region[n].split(',')
+            args.fine_tune_left_region[n] = list([int(v) for v in args.fine_tune_left_region[n]])
     if args.fine_tune_right_region is not None:
-        args.fine_tune_right_region = args.fine_tune_right_region.split(',')
-        args.fine_tune_right_region = list([int(v) for v in args.fine_tune_right_region])
+        for n in range(len(args.fine_tune_right_region)):
+            args.fine_tune_right_region[n] = args.fine_tune_right_region[n].split(',')
+            args.fine_tune_right_region[n] = list([int(v) for v in args.fine_tune_right_region[n]])
 
     # Read input images.
     # We use imdecode instead of imread to work around Unicode breakage on Windows.
