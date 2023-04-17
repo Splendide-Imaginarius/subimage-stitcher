@@ -33,6 +33,7 @@ subimage-stitcher --foreground "inputs/foreground.png" --background "inputs/back
 * If you're seeing bad warping results, the `--feature-type`, `--subset-frac`, and `--no-cross-check` arguments are the most likely to help.
 * The ImageMagick composite images are likely to look better to humans, but the OpenCV composite image is likely to work better as input to a subsequent Subimage Stitcher feature-detection pass. You can use the `--replace-foreground` or `--replace-background` arguments to get the best of both worlds.
 * Running the input images through Real-ESRGAN first seems to improve the reliabilty of Subimage Stitcher's feature detection.
+* If you've already followed the above tips, but one or both of the seams are still off by just a few pixels, you can use the `--fine-tune-left-region` and `--fine-tune-right-region` arguments, like this: `--fine-tune-left-region 500,550 --fine-tune-right-region 400,450` (this will fine-tune the stitching matrix to prioritize the alignment of pixels 500 through 550 of the left seam, and pixels 400 through 450 of the right seam). Pixels are in foreground coordinates. Fine-tuning works by translating the Y coordinates of the corners of the perspective transformation. Typically, you would prioritize a high-contrast edge or a piece of geometry that naturally attracts the eye.
 
 Run `subimage-stitcher --help` to see full command-line options.
 

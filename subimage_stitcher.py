@@ -6,7 +6,91 @@ import subprocess
 import cv2 as cv
 import numpy as np
 
-def warp_foreground_to_background(foreground, background, replace_foreground=None, background_scale=1.0, feature_type='orb', max_features=500, cross_check=True, subset_frac=0.2, confidence=0.995, transform_mode='homography', interpolation='linear'):
+def fine_tune_warp(foreground, background, M, original_foreground_w, original_foreground_h, interpolation, points_type, confidence, use_left_edge, region):
+    # Compute corners from old matrix.
+    foreground_corners = points_type([
+        [[0,                     0]],
+        [[original_foreground_w, 0]],
+        [[0,                     original_foreground_h]],
+        [[original_foreground_w, original_foreground_h]],
+    ])
+    background_corners = cv.perspectiveTransform(foreground_corners, M)
+
+    # Get left/right edge of foreground image.
+    edge_width = int(0.05 * len(foreground[0]))
+    if use_left_edge:
+        foreground_edge = foreground[:, :edge_width]
+    else:
+        foreground_edge = foreground[:, -edge_width:]
+
+    # Focus on a specific part of foreground image.
+    region_top_dist = region[0]
+    region_bottom_dist = len(foreground_edge) - region[1]
+    foreground_edge = foreground_edge[region_top_dist:-region_bottom_dist, :]
+
+    best_corr = 0.0
+    best_error = None
+    best_M = None
+
+    max_fine_tuning_pixels = 10
+    fine_tuning_step = 1
+
+    for fine_tuning_error_top in range(-max_fine_tuning_pixels, max_fine_tuning_pixels+1, fine_tuning_step):
+        #for fine_tuning_error_bottom in range(-max_fine_tuning_pixels, max_fine_tuning_pixels+1, fine_tuning_step):
+        for fine_tuning_error_bottom in [fine_tuning_error_top]:
+            # Apply error correction to left or right side's Y coord.
+            if use_left_edge:
+                fine_tuned_foreground_corners = points_type([
+                    [[0,                     fine_tuning_error_top]],
+                    [[original_foreground_w, 0]],
+                    [[0,                     original_foreground_h+fine_tuning_error_bottom]],
+                    [[original_foreground_w, original_foreground_h]],
+                ])
+            else:
+                fine_tuned_foreground_corners = points_type([
+                    [[0,                     0]],
+                    [[original_foreground_w, fine_tuning_error_top]],
+                    [[0,                     original_foreground_h]],
+                    [[original_foreground_w, original_foreground_h+fine_tuning_error_bottom]],
+                ])
+
+            # Calculate new matrix
+            new_M, mask = cv.findHomography(fine_tuned_foreground_corners, background_corners, 0, confidence=confidence)
+
+            # Get left/right edge of background image.
+            background_scaled_to_foreground = cv.warpPerspective(background, new_M, (original_foreground_w,original_foreground_h), flags=interpolation|cv.WARP_INVERSE_MAP, borderMode=cv.BORDER_REPLICATE)
+            if use_left_edge:
+                background_edge = background_scaled_to_foreground[:, :edge_width]
+            else:
+                background_edge = background_scaled_to_foreground[:, -edge_width:]
+
+            # Focus on a specific part of foreground image.
+            background_edge = background_edge[region_top_dist:-region_bottom_dist, :]
+
+            # Only enable for debugging the crop operation
+            if False:
+                is_success, im_buf_arr = cv.imencode('.png', foreground_edge)
+                if not is_success:
+                    raise Exception('cv.imencode failure')
+                im_buf_arr.tofile('foreground_edge.png')
+                is_success, im_buf_arr = cv.imencode('.png', background_edge)
+                if not is_success:
+                    raise Exception('cv.imencode failure')
+                im_buf_arr.tofile('background_edge.png')
+
+            # Compute correlation.
+            # https://docs.opencv.org/4.x/d4/dc6/tutorial_py_template_matching.html
+            correlation = cv.matchTemplate(background_edge,foreground_edge,cv.TM_CCOEFF_NORMED)
+            min_corr, max_corr, min_corr_loc, max_corr_loc = cv.minMaxLoc(correlation)
+
+            if max_corr > best_corr:
+                best_corr, best_error, best_M = max_corr, (fine_tuning_error_top, fine_tuning_error_bottom), new_M
+
+    print(f'best error {"left" if use_left_edge else "right"}: {best_error}')
+
+    return best_M
+
+def warp_foreground_to_background(foreground, background, replace_foreground=None, background_scale=1.0, feature_type='orb', max_features=500, cross_check=True, subset_frac=0.2, confidence=0.995, transform_mode='homography', interpolation='linear', fine_tune_left_region=None, fine_tune_right_region=None):
     if replace_foreground is None:
         replace_foreground = foreground
 
@@ -62,7 +146,7 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
     # Handle foreground replacement.
     # We assume that the replacement has the same aspect ratio as the original.
     replace_foreground_scale = (foreground.shape[0] * foreground.shape[1] / (replace_foreground.shape[0] * replace_foreground.shape[1]))**0.5
-    foreground = replace_foreground
+    original_foreground, foreground = foreground, replace_foreground
 
     # Fill in RGB data for fully transparent pixels, otherwise the bilinear filtering will produce halos.
     # This is unfortunately rather slow. Maybe there's a faster way?
@@ -88,6 +172,9 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
     foreground_alpha_border = foreground[1:-1, 1:-1]
     foreground_alpha_border = cv.copyMakeBorder(foreground_alpha_border, top=1, bottom=1, left=1, right=1, borderType=cv.BORDER_CONSTANT, value=(0,0,0,0))
 
+    # Get foreground dimensions.
+    original_foreground_h,original_foreground_w = original_foreground.shape[:2]
+
     # Handle background scaling.
     h,w = background.shape[:2]
     h,w = (h * background_scale, w * background_scale)
@@ -108,6 +195,12 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
     if transform_mode == 'homography':
         # Find transformation matrix.
         M, mask = cv.findHomography(foreground_points, background_points, cv.RANSAC, confidence=confidence)
+
+        # Fine-tune based on left and right edge of foreground.
+        if fine_tune_left_region is not None:
+            M = fine_tune_warp(foreground=original_foreground, background=background, M=M, original_foreground_w=original_foreground_w, original_foreground_h=original_foreground_h, interpolation=interpolation, points_type=points_type, confidence=confidence, use_left_edge=True, region=fine_tune_left_region)
+        if fine_tune_right_region is not None:
+            M = fine_tune_warp(foreground=original_foreground, background=background, M=M, original_foreground_w=original_foreground_w, original_foreground_h=original_foreground_h, interpolation=interpolation, points_type=points_type, confidence=confidence, use_left_edge=False, region=fine_tune_right_region)
 
         # Scale output
         M[0][0] *= background_scale * replace_foreground_scale
@@ -203,6 +296,10 @@ def main():
         help='Confidence level to aim for')
     parser.add_argument('--transform-mode', default='homography',
         choices=['homography', 'affine3d', 'affine2d', 'affinepartial2d'], help='Transform mode')
+    parser.add_argument('--fine-tune-left-region', required=False,
+        type=str, help='Fine-tuning critical region (left edge) (enter two comma-separated Y coordinates in foreground scale)')
+    parser.add_argument('--fine-tune-right-region', required=False,
+        type=str, help='Fine-tuning critical region (right edge) (enter two comma-separated Y coordinates in foreground scale)')
     parser.add_argument('--interpolation', default='linear',
         choices=['nearest', 'linear', 'cubic', 'lanczos'], help='Interpolation mode')
     parser.add_argument('--scale', type=float, default=1.0,
@@ -215,6 +312,13 @@ def main():
         args.replace_foreground = args.foreground
     if args.replace_background is None:
         args.replace_background = args.background
+
+    if args.fine_tune_left_region is not None:
+        args.fine_tune_left_region = args.fine_tune_left_region.split(',')
+        args.fine_tune_left_region = list([int(v) for v in args.fine_tune_left_region])
+    if args.fine_tune_right_region is not None:
+        args.fine_tune_right_region = args.fine_tune_right_region.split(',')
+        args.fine_tune_right_region = list([int(v) for v in args.fine_tune_right_region])
 
     # Read input images.
     # We use imdecode instead of imread to work around Unicode breakage on Windows.
@@ -245,7 +349,7 @@ def main():
         replace_background = cv.cvtColor(replace_background, cv.COLOR_RGB2RGBA)
 
     # Transform foreground, generate keypoints debug output.
-    warped, M, keypoints = warp_foreground_to_background(foreground, background, replace_foreground=replace_foreground, feature_type=args.feature_type, max_features=args.max_features, cross_check=args.cross_check, subset_frac=args.subset_frac, confidence=args.confidence, transform_mode=args.transform_mode, interpolation=args.interpolation, background_scale=args.scale)
+    warped, M, keypoints = warp_foreground_to_background(foreground, background, replace_foreground=replace_foreground, feature_type=args.feature_type, max_features=args.max_features, cross_check=args.cross_check, subset_frac=args.subset_frac, confidence=args.confidence, transform_mode=args.transform_mode, interpolation=args.interpolation, background_scale=args.scale, fine_tune_left_region=args.fine_tune_left_region, fine_tune_right_region=args.fine_tune_right_region)
 
     # Scale background.
     background = cv.resize(replace_background, (int(background.shape[1]*args.scale), int(background.shape[0]*args.scale)), interpolation = cv.INTER_LANCZOS4)
