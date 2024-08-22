@@ -217,8 +217,12 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
         M[2][1] *= replace_foreground_scale
 
         # Transform foreground to fit background.
-        foreground_rgb = cv.warpPerspective(foreground, M, (w,h), flags=interpolation, borderMode=cv.BORDER_REPLICATE)
-        foreground_alpha = cv.warpPerspective(foreground_alpha_border, M, (w,h), flags=interpolation, borderMode=cv.BORDER_CONSTANT, borderValue=(0,0,0,0))
+        try:
+            foreground_rgb = cv.warpPerspective(foreground, M, (w,h), flags=interpolation, borderMode=cv.BORDER_REPLICATE)
+            foreground_alpha = cv.warpPerspective(foreground_alpha_border, M, (w,h), flags=interpolation, borderMode=cv.BORDER_CONSTANT, borderValue=(0,0,0,0))
+        except cv.error:
+            foreground_rgb, foreground_alpha = None, None
+            print('Size above OpenCV warp limit, skipping OpenCV warp')
     elif transform_mode == 'affine3d':
         # TODO: Affine3D mode isn't properly tested yet.
 
@@ -235,8 +239,12 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
         M[1][2] *= background_scale
 
         # Transform foreground to fit background.
-        foreground_rgb = cv.warpAffine(foreground, M, (w,h), flags=interpolation, borderMode=cv.BORDER_REPLICATE)
-        foreground_alpha = cv.warpAffine(foreground_alpha_border, M, (w,h), flags=interpolation, borderMode=cv.BORDER_CONSTANT, borderValue=(0,0,0,0))
+        try:
+            foreground_rgb = cv.warpAffine(foreground, M, (w,h), flags=interpolation, borderMode=cv.BORDER_REPLICATE)
+            foreground_alpha = cv.warpAffine(foreground_alpha_border, M, (w,h), flags=interpolation, borderMode=cv.BORDER_CONSTANT, borderValue=(0,0,0,0))
+        except cv.error:
+            foreground_rgb, foreground_alpha = None, None
+            print('Size above OpenCV warp limit, skipping OpenCV warp')
     elif transform_mode in ('affine2d', 'affinepartial2d'):
         # Find transformation matrix.
         if transform_mode == 'affine2d':
@@ -256,16 +264,23 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
         M[1][2] *= background_scale
 
         # Transform foreground to fit background.
-        foreground_rgb = cv.warpAffine(foreground, M, (w,h), flags=interpolation, borderMode=cv.BORDER_REPLICATE)
-        foreground_alpha = cv.warpAffine(foreground_alpha_border, M, (w,h), flags=interpolation, borderMode=cv.BORDER_CONSTANT, borderValue=(0,0,0,0))
+        try:
+            foreground_rgb = cv.warpAffine(foreground, M, (w,h), flags=interpolation, borderMode=cv.BORDER_REPLICATE)
+            foreground_alpha = cv.warpAffine(foreground_alpha_border, M, (w,h), flags=interpolation, borderMode=cv.BORDER_CONSTANT, borderValue=(0,0,0,0))
+        except cv.error:
+            foreground_rgb, foreground_alpha = None, None
+            print('Size above OpenCV warp limit, skipping OpenCV warp')
     else:
         raise Exception('Mode not supported')
 
-    foreground_b, foreground_g, foreground_r, _ = cv.split(foreground_rgb)
-    _, _, _, foreground_alpha = cv.split(foreground_alpha)
-    foreground = cv.merge((foreground_b, foreground_g, foreground_r, foreground_alpha))
+    if foreground_rgb is not None:
+        foreground_b, foreground_g, foreground_r, _ = cv.split(foreground_rgb)
+        _, _, _, foreground_alpha = cv.split(foreground_alpha)
+        foreground = cv.merge((foreground_b, foreground_g, foreground_r, foreground_alpha))
 
-    return foreground, M, matches_image
+        return foreground, M, matches_image
+    else:
+        return None, M, matches_image
 
 def main():
     parser = argparse.ArgumentParser(prog='subimage-stitcher')
@@ -360,9 +375,6 @@ def main():
     # Scale background.
     background = cv.resize(replace_background, (int(background.shape[1]*args.scale), int(background.shape[0]*args.scale)), interpolation = cv.INTER_LANCZOS4)
 
-    # Generate stacked debug output.
-    stacked = np.hstack([warped, background])
-
     # Write results.
     # We use imencode instead of imwrite to work around Unicode breakage on Windows.
     # https://jdhao.github.io/2019/09/11/opencv_unicode_image_path/
@@ -372,26 +384,37 @@ def main():
         raise Exception('cv.imencode failure')
     im_buf_arr.tofile(args.out_background)
 
-    is_success, im_buf_arr = cv.imencode('.png', stacked)
-    if not is_success:
-        raise Exception('cv.imencode failure')
-    im_buf_arr.tofile(args.out_stacked)
-
     is_success, im_buf_arr = cv.imencode('.png', keypoints)
     if not is_success:
         raise Exception('cv.imencode failure')
     im_buf_arr.tofile(args.out_keypoints)
 
-    is_success, im_buf_arr = cv.imencode('.png', warped)
-    if not is_success:
-        raise Exception('cv.imencode failure')
-    im_buf_arr.tofile(args.out_warped)
+    # Generate stacked debug output.
+    # warped might be None due to https://github.com/opencv/opencv/issues/7544
+    # If so, we only use magick for warping.
+    if warped is not None:
+        stacked = np.hstack([warped, background])
+
+        # Write results.
+        # We use imencode instead of imwrite to work around Unicode breakage on Windows.
+        # https://jdhao.github.io/2019/09/11/opencv_unicode_image_path/
+
+        is_success, im_buf_arr = cv.imencode('.png', stacked)
+        if not is_success:
+            raise Exception('cv.imencode failure')
+        im_buf_arr.tofile(args.out_stacked)
+
+        is_success, im_buf_arr = cv.imencode('.png', warped)
+        if not is_success:
+            raise Exception('cv.imencode failure')
+        im_buf_arr.tofile(args.out_warped)
 
     # Do homography via magick, because it handles alpha better.
     subprocess.run(['magick', args.replace_foreground, '-background', 'transparent', '-extent', f'{max(int(background.shape[1]), int(replace_foreground.shape[1]))}x{max(int(background.shape[0]), int(replace_foreground.shape[0]))}', '-virtual-pixel', 'transparent', '-distort', 'Perspective-Projection', f'{M[0][0]}, {M[0][1]}, {M[0][2]} {M[1][0]}, {M[1][1]}, {M[1][2]} {M[2][0]}, {M[2][1]}', '-extent', f'{int(background.shape[1])}x{int(background.shape[0])}', args.out_warped + '.magick.png'], check=True)
 
     # Generate composite image via magick, because it handles alpha better.
-    subprocess.run(['magick', args.out_background, args.out_warped, '-composite', args.out_composite], check=True)
+    if warped is not None:
+        subprocess.run(['magick', args.out_background, args.out_warped, '-composite', args.out_composite], check=True)
     subprocess.run(['magick', args.out_background, args.out_warped + '.magick.png', '-composite', args.out_composite + '.magick.png'], check=True)
     subprocess.run(['magick', args.out_background, args.out_warped + '.magick.png', '-channel', 'Alpha', '-negate', '-morphology', 'Dilate', f'Diamond:{args.blend*2}', '-negate', '-blur', f'{args.blend*2}x{args.blend}', '-channel', 'All', '-composite', args.out_composite + '.magick-blend.png'], check=True)
 
