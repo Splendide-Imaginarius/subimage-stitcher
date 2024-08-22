@@ -410,6 +410,8 @@ def main():
         im_buf_arr.tofile(args.out_warped)
 
     # Do homography via magick, because it handles alpha better.
+    if args.transform_mode in ('affine2d', 'affinepartial2d'):
+        M = [ M[0], M[1], [0.0, 0.0, 1.0] ]
     subprocess.run(['magick', args.replace_foreground, '-background', 'transparent', '-extent', f'{max(int(background.shape[1]), int(replace_foreground.shape[1]))}x{max(int(background.shape[0]), int(replace_foreground.shape[0]))}', '-virtual-pixel', 'transparent', '-distort', 'Perspective-Projection', f'{M[0][0]}, {M[0][1]}, {M[0][2]} {M[1][0]}, {M[1][1]}, {M[1][2]} {M[2][0]}, {M[2][1]}', '-extent', f'{int(background.shape[1])}x{int(background.shape[0])}', args.out_warped + '.magick.png'], check=True)
 
     # Generate composite image via magick, because it handles alpha better.
