@@ -346,28 +346,36 @@ def main():
     # https://jdhao.github.io/2019/09/11/opencv_unicode_image_path/
     foreground = cv.imdecode(np.fromfile(args.foreground, dtype=np.uint8), cv.IMREAD_UNCHANGED)
     background = cv.imdecode(np.fromfile(args.background, dtype=np.uint8), cv.IMREAD_UNCHANGED)
-    replace_foreground = cv.imdecode(np.fromfile(args.replace_foreground, dtype=np.uint8), cv.IMREAD_UNCHANGED)
-    replace_background = cv.imdecode(np.fromfile(args.replace_background, dtype=np.uint8), cv.IMREAD_UNCHANGED)
 
     # Convert from grayscale to color.
     if len(foreground.shape) < 3:
         foreground = cv.cvtColor(foreground, cv.COLOR_GRAY2BGR)
     if len(background.shape) < 3:
         background = cv.cvtColor(background, cv.COLOR_GRAY2BGR)
-    if len(replace_foreground.shape) < 3:
-        replace_foreground = cv.cvtColor(replace_foreground, cv.COLOR_GRAY2BGR)
-    if len(replace_background.shape) < 3:
-        replace_background = cv.cvtColor(replace_background, cv.COLOR_GRAY2BGR)
 
     # Add alpha channel.
     if len(foreground.shape) == 3 and foreground.shape[2] == 3:
         foreground = cv.cvtColor(foreground, cv.COLOR_RGB2RGBA)
     if len(background.shape) == 3 and background.shape[2] == 3:
         background = cv.cvtColor(background, cv.COLOR_RGB2RGBA)
-    if len(replace_foreground.shape) == 3 and replace_foreground.shape[2] == 3:
-        replace_foreground = cv.cvtColor(replace_foreground, cv.COLOR_RGB2RGBA)
-    if len(replace_background.shape) == 3 and replace_background.shape[2] == 3:
-        replace_background = cv.cvtColor(replace_background, cv.COLOR_RGB2RGBA)
+
+    # Do the same for replacement images.
+    if args.replace_foreground == args.foreground:
+        replace_foreground = foreground
+    else:
+        replace_foreground = cv.imdecode(np.fromfile(args.replace_foreground, dtype=np.uint8), cv.IMREAD_UNCHANGED)
+        if len(replace_foreground.shape) < 3:
+            replace_foreground = cv.cvtColor(replace_foreground, cv.COLOR_GRAY2BGR)
+        if len(replace_foreground.shape) == 3 and replace_foreground.shape[2] == 3:
+            replace_foreground = cv.cvtColor(replace_foreground, cv.COLOR_RGB2RGBA)
+    if args.replace_background == args.background:
+        replace_background = background
+    else:
+        replace_background = cv.imdecode(np.fromfile(args.replace_background, dtype=np.uint8), cv.IMREAD_UNCHANGED)
+        if len(replace_background.shape) < 3:
+            replace_background = cv.cvtColor(replace_background, cv.COLOR_GRAY2BGR)
+        if len(replace_background.shape) == 3 and replace_background.shape[2] == 3:
+            replace_background = cv.cvtColor(replace_background, cv.COLOR_RGB2RGBA)
 
     # Transform foreground, generate keypoints debug output.
     warped, M, keypoints = warp_foreground_to_background(foreground, background, replace_foreground=replace_foreground, feature_type=args.feature_type, max_features=args.max_features, cross_check=args.cross_check, subset_frac=args.subset_frac, confidence=args.confidence, transform_mode=args.transform_mode, interpolation=args.interpolation, background_scale=args.scale, fine_tune_left_region=args.fine_tune_left_region, fine_tune_right_region=args.fine_tune_right_region)
