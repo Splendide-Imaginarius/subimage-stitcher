@@ -42,7 +42,7 @@ Run `subimage-stitcher --help` to see full command-line options.
 
 ## Credits
 
-Copyright 2023 Splendide Imaginarius.
+Copyright 2023-2025 Splendide Imaginarius.
 
 This is not a license requirement, but if you use Subimage Stitcher to process images that you distribute, it would be greatly appreciated if you credit me. Example credits: "This image was processed with Subimage Stitcher by Splendide Imaginarius." Linking back to this Git repository would also be greatly appreciated.
 
