@@ -230,12 +230,11 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
         _, M, inliers = cv.estimateAffine3D(foreground_points, background_points, confidence=confidence)
 
         # Scale output
-        # TODO: handle replace_foreground_scale
-        M[0][0] *= background_scale
-        M[0][1] *= background_scale
+        M[0][0] *= background_scale * replace_foreground_scale
+        M[0][1] *= background_scale * replace_foreground_scale
         M[0][2] *= background_scale
-        M[1][0] *= background_scale
-        M[1][1] *= background_scale
+        M[1][0] *= background_scale * replace_foreground_scale
+        M[1][1] *= background_scale * replace_foreground_scale
         M[1][2] *= background_scale
 
         # Transform foreground to fit background.
@@ -255,12 +254,11 @@ def warp_foreground_to_background(foreground, background, replace_foreground=Non
             raise Exception('Mode not supported')
 
         # Scale output
-        # TODO: handle replace_foreground_scale
-        M[0][0] *= background_scale
-        M[0][1] *= background_scale
+        M[0][0] *= background_scale * replace_foreground_scale
+        M[0][1] *= background_scale * replace_foreground_scale
         M[0][2] *= background_scale
-        M[1][0] *= background_scale
-        M[1][1] *= background_scale
+        M[1][0] *= background_scale * replace_foreground_scale
+        M[1][1] *= background_scale * replace_foreground_scale
         M[1][2] *= background_scale
 
         # Transform foreground to fit background.
