@@ -378,6 +378,13 @@ def main():
     # Transform foreground, generate keypoints debug output.
     warped, M, keypoints = warp_foreground_to_background(foreground, background, replace_foreground=replace_foreground, feature_type=args.feature_type, max_features=args.max_features, cross_check=args.cross_check, subset_frac=args.subset_frac, confidence=args.confidence, transform_mode=args.transform_mode, interpolation=args.interpolation, background_scale=args.scale, fine_tune_left_region=args.fine_tune_left_region, fine_tune_right_region=args.fine_tune_right_region)
 
+    # Detect scale factor of matrix, to assist in upscaling.
+    scale_matrix = np.array(M[:2, :2])
+    # Area scale factor will be negative if there's a reflection.
+    area_scale_factor = np.linalg.det(scale_matrix)
+    linear_scale_factor = abs(area_scale_factor) ** 0.5
+    print(f'Linear scale factor: {linear_scale_factor}')
+
     # Scale background.
     background = cv.resize(replace_background, (int(background.shape[1]*args.scale), int(background.shape[0]*args.scale)), interpolation = cv.INTER_LANCZOS4)
 
